@@ -248,6 +248,12 @@ def parse_file_tech(file: Path) -> None:
                     error(f"TODO: connect {name} to {dataset_name}")
 
 
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo("NIG Upload version: 0.1")
+        raise typer.Exit()
+
+
 @app.command()
 def upload(
     study: Path = typer.Argument(..., help="Path to the study"),
@@ -264,6 +270,15 @@ def upload(
         help="Password of the certifiate",
     ),
     totp: str = typer.Option(..., prompt="2FA TOTP"),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-v",
+        help="Print version information and quit",
+        show_default=False,
+        callback=version_callback,
+        is_eager=True,
+    ),
 ) -> None:
 
     if not url.startswith("https:"):
@@ -429,7 +444,3 @@ def upload(
         error(f"TODO: set UPLOAD COMPLETE to {dataset_name}")
 
     return None
-
-
-if __name__ == "__main__":
-    app()
