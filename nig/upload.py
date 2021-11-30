@@ -267,7 +267,7 @@ def upload(
         ...,
         prompt="Password of your certificate",
         hide_input=True,
-        help="Password of the certifiate",
+        help="Password of the certificate",
     ),
     totp: str = typer.Option(..., prompt="2FA TOTP"),
     version: bool = typer.Option(

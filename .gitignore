@@ -1,2 +1,4 @@
 .cache_ggshield
 *.egg-info/
+__pycache__/
+
