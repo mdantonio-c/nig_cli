@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from mimetypes import MimeTypes
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Union
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 import dateutil.parser
 import OpenSSL.crypto
@@ -134,10 +134,14 @@ def date_from_string(date: str, fmt: str = "%d/%m/%Y") -> Optional[datetime]:
     return return_date
 
 
-def parse_file_ped(file: Path) -> None:
+def parse_file_ped(
+    file: Path,
+) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, List[str]]]]:
     with open(file) as f:
 
         header: List[str] = []
+        phenotypes: List[Dict[str, Any]] = []
+        relationships: Optional[Dict[str, List[str]]] = {}
         while True:
             row = f.readline()
             if not row:
@@ -163,41 +167,44 @@ def parse_file_ped(file: Path) -> None:
             mother = line[3]
             sex = line[4]
 
-            if sex == "1":
+            if sex == "1" or sex == "M":
                 sex = "male"
-            elif sex == "2":
+            elif sex == "2" or sex == "F":
                 sex = "female"
 
             properties = {}
             properties["name"] = individual_id
             properties["sex"] = sex
 
-            value = get_value("birthday", header, line)
-            if value is not None:
-                d = date_from_string(value)
-                if d:
-                    properties["birthday"] = d
+            age = get_value("age", header, line)
+            if age is not None:
+                properties["age"] = int(age)
 
-            properties["birthplace"] = get_value("birthplace", header, line)
-            error(f"TODO: create {individual_id} with props = {properties}")
+            # birth_place = get_value("birthplace", header, line)
+            # if birth_place is not None:
+            #     properties["birth_place"] = birth_place
+
+            hpo = get_value("hpo", header, line)
+            if hpo is not None:
+                hpo_list = hpo.split(",")
+                properties["hpo"] = hpo_list
+
+            phenotypes.append(properties)
+
+            # parse relationships
+            relationships[individual_id] = []
 
             if father and father != "-":
-                error(f"TODO: connect {individual_id} to {father}")
+                relationships[individual_id].append(father)
 
             if mother and mother != "-":
-                error(f"TODO: connect {individual_id} to {mother}")
+                relationships[individual_id].append(mother)
 
-            value = get_value("hpo", header, line)
-            if value is not None:
-                hpo_list = value.split(",")
-                for hpo_id in hpo_list:
-                    error(f"TODO: connect {individual_id} to {hpo_id}")
+            # if the phenotype has not relationships, delete the key
+            if not relationships[individual_id]:
+                del relationships[individual_id]
 
-            value = get_value("dataset", header, line)
-            if value is not None:
-                dataset_list = value.split(",")
-                for dataset_name in dataset_list:
-                    error(f"TODO: connect {individual_id} to {dataset_name}")
+    return phenotypes, relationships
 
 
 def parse_file_tech(file: Path) -> None:
@@ -307,18 +314,37 @@ def upload(
                     study_tree["datasets"].setdefault(d.name, [])
                     study_tree["datasets"][d.name].append(dat)
 
+    if not study_tree["datasets"]:
+        return error(f"No files found for upload in: {study}")
+
     pedigree = study.joinpath("pedigree.txt")
+    phenotypes_uuid: Dict[str, str] = {}
     if pedigree.is_file():
-        parse_file_ped(pedigree)
-        study_tree["phenotypes"] = pedigree
+        phenotypes_list, relationships = parse_file_ped(pedigree)
+        # validate phenotypes: check if they are associated to an existing dataset
+        for p in phenotypes_list:
+            if p["name"] not in study_tree["datasets"].keys():
+                # phenotype has to have the same name of the dataset to be associated
+                return error(
+                    f"Phenotype {p['name']} is not related to any existing dataset"
+                )
+            # add a key in phenotypes_uuid dictionary
+            phenotypes_uuid[p["name"]] = ""
+        # check if relationships are valid
+        for key, value in relationships.items():
+            for el in value:
+                if el not in phenotypes_uuid.keys():
+                    return error(
+                        f"Relationship between {key} and {el}: Phenotype {el} does not exists"
+                    )
+
+        study_tree["phenotypes"] = phenotypes_list
+        study_tree["relationships"] = relationships
 
     technical = study.joinpath("technical.txt")
     if technical.is_file():
         parse_file_tech(technical)
         study_tree["technicals"] = technical
-
-    if not study_tree["datasets"]:
-        return error(f"No files found for upload in: {study}")
 
     # Do login
     r = request(
@@ -356,6 +382,46 @@ def upload(
 
     study_uuid = r.json()
 
+    # create phenotypes
+    if study_tree["phenotypes"]:
+        for phenotype in study_tree["phenotypes"]:
+            r = request(
+                method=POST,
+                url=f"{url}api/study/{study_uuid}/phenotypes",
+                headers=headers,
+                certfile=certfile,
+                certpwd=certpwd,
+                data=phenotype,
+            )
+            if r.status_code != 200:
+                return error("Phenotype creation failed", r)
+
+            success(f"Succesfully created phenotype {phenotype['name']}")
+
+            # add the uuid in the phenotype uuid dictionary
+            phenotypes_uuid[phenotype["name"]] = r.json()
+            error("TODO add geodata for birthplace")
+            error("TODO add hpo list")
+
+    # create phenotypes relationships
+    if study_tree["relationships"]:
+        for son, parent_list in study_tree["relationships"].items():
+            son_uuid = phenotypes_uuid.get(son)
+            for parent in parent_list:
+                parent_uuid = phenotypes_uuid.get(parent)
+                r = request(
+                    method=POST,
+                    url=f"{url}api/phenotype/{son_uuid}/relationships/{parent_uuid}",
+                    headers=headers,
+                    certfile=certfile,
+                    certpwd=certpwd,
+                    data={},
+                )
+                if r.status_code != 200:
+                    return error("Phenotype relationship failed", r)
+
+                success(f"Succesfully created relationship between {son} and {parent}")
+
     for dataset_name, files in study_tree["datasets"].items():
         r = request(
             method=POST,
@@ -371,6 +437,22 @@ def upload(
 
         success(f"Succesfully created dataset {dataset_name}")
         uuid = r.json()
+
+        #  connect the phenotype to the dataset
+        if dataset_name in phenotypes_uuid.keys():
+            phen_uuid = phenotypes_uuid[dataset_name]
+            r = request(
+                method=PUT,
+                url=f"{url}api/dataset/{uuid}",
+                headers=headers,
+                certfile=certfile,
+                certpwd=certpwd,
+                data={"phenotype": phen_uuid},
+            )
+            if r.status_code != 204:
+                return error("Can't assign a phenotype to the dataset", r)
+
+            success(f"Succesfully assigned phenotype to dataset {dataset_name}")
 
         for file in files:
             # get the data for the upload request
