@@ -399,7 +399,7 @@ def upload(
             if r.status_code != 201:
                 return error("Can't start the upload", r)
 
-            success("Upload initialized succesfully")
+            success("Upload succesfully initialized")
 
             chunksize = 16 * 1024 * 1024  # 16 mb
             range_start = 0
