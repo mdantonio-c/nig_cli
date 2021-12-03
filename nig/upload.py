@@ -23,6 +23,14 @@ class HPOException(Exception):
     """Exception for invalid HPO"""
 
 
+class ParsingSexException(Exception):
+    """Exception for invalid sex"""
+
+
+class AgeException(Exception):
+    """Exception for invalid sex"""
+
+
 @contextmanager
 def pfx_to_pem(pfx_path: Path, pfx_password: str) -> Generator[str, None, None]:
     """Decrypts the .pfx file to be used with requests."""
@@ -176,6 +184,10 @@ def parse_file_ped(
                 sex = "male"
             elif sex == "2" or sex == "F":
                 sex = "female"
+            else:
+                raise ParsingSexException(
+                    f"Unable to parse {sex} sex for {individual_id} phenotype: Please use M F notation"
+                )
 
             properties = {}
             properties["name"] = individual_id
@@ -183,6 +195,10 @@ def parse_file_ped(
 
             age = get_value("age", header, line)
             if age is not None:
+                if int(age) < 0:
+                    raise AgeException(
+                        f"Phenotype {individual_id}: {age} is not a valid age"
+                    )
                 properties["age"] = int(age)
 
             # birth_place = get_value("birthplace", header, line)
@@ -323,6 +339,11 @@ def upload(
                 if dat.is_file() and dat.name.endswith(".fastq.gz"):
                     study_tree["datasets"].setdefault(d.name, [])
                     study_tree["datasets"][d.name].append(dat)
+            if len(study_tree["datasets"][d.name]) > 2:
+                # the dataset is invalid because contains too many fastq
+                return error(
+                    f"Dataset {d.name} contains too many fastq files: max files allowed are 2 par dataset"
+                )
 
     if not study_tree["datasets"]:
         return error(f"No files found for upload in: {study}")
@@ -332,7 +353,7 @@ def upload(
     if pedigree.is_file():
         try:
             phenotypes_list, relationships = parse_file_ped(pedigree)
-        except HPOException as exc:
+        except (HPOException, ParsingSexException, AgeException) as exc:
             return error(exc)
         # validate phenotypes: check if they are associated to an existing dataset
         for p in phenotypes_list:
