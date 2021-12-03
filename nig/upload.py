@@ -1,3 +1,4 @@
+import json
 import re
 import tempfile
 from contextlib import contextmanager
@@ -16,6 +17,10 @@ app = typer.Typer()
 
 POST = "post"
 PUT = "put"
+
+
+class HPOException(Exception):
+    """Exception for invalid HPO"""
 
 
 @contextmanager
@@ -187,7 +192,12 @@ def parse_file_ped(
             hpo = get_value("hpo", header, line)
             if hpo is not None:
                 hpo_list = hpo.split(",")
-                properties["hpo"] = hpo_list
+                for hpo_el in hpo_list:
+                    if not re.match(r"HP:[0-9]+$", hpo_el):
+                        raise HPOException(
+                            f"Error in parsing phenotype {individual_id}: {hpo_el} is an invalid HPO"
+                        )
+                properties["hpo"] = json.dumps(hpo_list)
 
             phenotypes.append(properties)
 
@@ -320,7 +330,10 @@ def upload(
     pedigree = study.joinpath("pedigree.txt")
     phenotypes_uuid: Dict[str, str] = {}
     if pedigree.is_file():
-        phenotypes_list, relationships = parse_file_ped(pedigree)
+        try:
+            phenotypes_list, relationships = parse_file_ped(pedigree)
+        except HPOException as exc:
+            return error(exc)
         # validate phenotypes: check if they are associated to an existing dataset
         for p in phenotypes_list:
             if p["name"] not in study_tree["datasets"].keys():
@@ -401,7 +414,6 @@ def upload(
             # add the uuid in the phenotype uuid dictionary
             phenotypes_uuid[phenotype["name"]] = r.json()
             error("TODO add geodata for birthplace")
-            error("TODO add hpo list")
 
     # create phenotypes relationships
     if study_tree["relationships"]:
