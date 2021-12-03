@@ -201,9 +201,9 @@ def parse_file_ped(
                     )
                 properties["age"] = int(age)
 
-            # birth_place = get_value("birthplace", header, line)
-            # if birth_place is not None:
-            #     properties["birth_place"] = birth_place
+            birth_place = get_value("birthplace", header, line)
+            if birth_place is not None:
+                properties["birth_place_name"] = birth_place
 
             hpo = get_value("hpo", header, line)
             if hpo is not None:
@@ -418,7 +418,36 @@ def upload(
 
     # create phenotypes
     if study_tree["phenotypes"]:
+        # get geodata list
+        r = request(
+            method=POST,
+            url=f"{url}api/study/{study_uuid}/phenotypes",
+            headers=headers,
+            certfile=certfile,
+            certpwd=certpwd,
+            data={"get_schema": True},
+        )
+        if r.status_code != 200:
+            return error("Can't retrieve geodata list", r)
+        for el in r.json():
+            if el["key"] == "birth_place":
+                geodata = el["options"]
+                break
         for phenotype in study_tree["phenotypes"]:
+            # get the birth_place
+            if phenotype["birth_place_name"]:
+                for geo_id, name in geodata.items():
+                    if name == phenotype["birth_place_name"]:
+                        phenotype["birth_place"] = geo_id
+                        break
+                if "birth_place" not in phenotype.keys():
+                    return error(
+                        f"Error for phenotype {phenotype['name']}: {phenotype['birth_place_name']} birth place not found"
+                    )
+
+                # delete birth_place_name key
+                del phenotype["birth_place_name"]
+
             r = request(
                 method=POST,
                 url=f"{url}api/study/{study_uuid}/phenotypes",
@@ -434,7 +463,6 @@ def upload(
 
             # add the uuid in the phenotype uuid dictionary
             phenotypes_uuid[phenotype["name"]] = r.json()
-            error("TODO add geodata for birthplace")
 
     # create phenotypes relationships
     if study_tree["relationships"]:
