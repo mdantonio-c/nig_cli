@@ -31,6 +31,14 @@ class AgeException(Exception):
     """Exception for invalid sex"""
 
 
+class PhenotypeNameException(Exception):
+    """Exception for phenotypes that have names not related to an existing dataset"""
+
+
+class RelationshipException(Exception):
+    """Exception for a relationship between non existing phenotypes"""
+
+
 @contextmanager
 def pfx_to_pem(pfx_path: Path, pfx_password: str) -> Generator[str, None, None]:
     """Decrypts the .pfx file to be used with requests."""
@@ -148,11 +156,12 @@ def date_from_string(date: str, fmt: str = "%d/%m/%Y") -> Optional[datetime]:
 
 
 def parse_file_ped(
-    file: Path,
+    file: Path, datasets: Dict[str, List[Path]]
 ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, List[str]]]]:
     with open(file) as f:
 
         header: List[str] = []
+        phenotype_list: List[str] = []
         phenotypes: List[Dict[str, Any]] = []
         relationships: Optional[Dict[str, List[str]]] = {}
         while True:
@@ -176,6 +185,12 @@ def parse_file_ped(
 
             # pedigree_id = line[0]
             individual_id = line[1]
+            # validate phenotypes: check if they are associated to an existing dataset
+            if individual_id not in datasets.keys():
+                # phenotype has to have the same name of the dataset to be associated
+                raise PhenotypeNameException(
+                    f"Phenotype {individual_id} is not related to any existing dataset"
+                )
             father = line[2]
             mother = line[3]
             sex = line[4]
@@ -216,6 +231,7 @@ def parse_file_ped(
                 properties["hpo"] = json.dumps(hpo_list)
 
             phenotypes.append(properties)
+            phenotype_list.append(individual_id)
 
             # parse relationships
             relationships[individual_id] = []
@@ -229,6 +245,15 @@ def parse_file_ped(
             # if the phenotype has not relationships, delete the key
             if not relationships[individual_id]:
                 del relationships[individual_id]
+
+    # check if relationships are valid
+    if relationships:
+        for son, family in relationships.items():
+            for parent in family:
+                if parent not in phenotype_list:
+                    raise RelationshipException(
+                        f"Error in relationship between {son} and {parent}: Phenotype {parent} does not exists"
+                    )
 
     return phenotypes, relationships
 
@@ -352,25 +377,17 @@ def upload(
     phenotypes_uuid: Dict[str, str] = {}
     if pedigree.is_file():
         try:
-            phenotypes_list, relationships = parse_file_ped(pedigree)
-        except (HPOException, ParsingSexException, AgeException) as exc:
+            phenotypes_list, relationships = parse_file_ped(
+                pedigree, study_tree["datasets"]
+            )
+        except (
+            PhenotypeNameException,
+            HPOException,
+            ParsingSexException,
+            AgeException,
+            RelationshipException,
+        ) as exc:
             return error(exc)
-        # validate phenotypes: check if they are associated to an existing dataset
-        for p in phenotypes_list:
-            if p["name"] not in study_tree["datasets"].keys():
-                # phenotype has to have the same name of the dataset to be associated
-                return error(
-                    f"Phenotype {p['name']} is not related to any existing dataset"
-                )
-            # add a key in phenotypes_uuid dictionary
-            phenotypes_uuid[p["name"]] = ""
-        # check if relationships are valid
-        for key, value in relationships.items():
-            for el in value:
-                if el not in phenotypes_uuid.keys():
-                    return error(
-                        f"Relationship between {key} and {el}: Phenotype {el} does not exists"
-                    )
 
         study_tree["phenotypes"] = phenotypes_list
         study_tree["relationships"] = relationships
