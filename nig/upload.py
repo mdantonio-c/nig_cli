@@ -39,6 +39,14 @@ class RelationshipException(Exception):
     """Exception for a relationship between non existing phenotypes"""
 
 
+class UnknownPlatformException(Exception):
+    """Exception for unknown platform for technicals"""
+
+
+class TechnicalAssociationException(Exception):
+    """Exception for technicals with a non existing dataset associated"""
+
+
 @contextmanager
 def pfx_to_pem(pfx_path: Path, pfx_password: str) -> Generator[str, None, None]:
     """Decrypts the .pfx file to be used with requests."""
@@ -258,11 +266,24 @@ def parse_file_ped(
     return phenotypes, relationships
 
 
-def parse_file_tech(file: Path) -> None:
+def parse_file_tech(
+    file: Path, datasets: Dict[str, List[Path]]
+) -> List[Dict[str, Any]]:
+
+    supported_platforms = [
+        "Illumina",
+        "Ion",
+        "Pacific Biosciences",
+        "Roche 454",
+        "SOLiD",
+        "SNP-array",
+        "Other",
+    ]
 
     with open(file) as f:
 
         header: List[str] = []
+        technicals: List[Dict[str, Any]] = []
         while True:
             row = f.readline()
             if not row:
@@ -285,25 +306,50 @@ def parse_file_tech(file: Path) -> None:
             name = line[0]
             date = line[1]
             platform = line[2]
-            # Not used
-            # reference = line[3]
-            kit = line[4]
+            kit = line[3]
 
+            technical = {}
             properties = {}
             properties["name"] = name
             if date and date != "-":
                 properties["sequencing_date"] = date_from_string(date)
             else:
                 properties["sequencing_date"] = ""
+
+            if platform and platform not in supported_platforms:
+                raise UnknownPlatformException(
+                    f"Error for {name} technical: Platform has to be one of {supported_platforms}"
+                )
             properties["platform"] = platform
             properties["enrichment_kit"] = kit
-            error(f"TODO: create {name} with props = {properties}")
+            technical["properties"] = properties
 
             value = get_value("dataset", header, line)
-            if value is not None:
+            if value is not None and value != "-":
                 dataset_list = value.split(",")
                 for dataset_name in dataset_list:
-                    error(f"TODO: connect {name} to {dataset_name}")
+                    if dataset_name not in datasets.keys():
+                        raise TechnicalAssociationException(
+                            f"Error for {name} technical: associated dataset {dataset_name} does not exists"
+                        )
+                technical["datasets"] = dataset_list
+            technicals.append(technical)
+    # check dataset association for technicals
+    if len(technicals) > 1:
+        associated_datasets = []
+        for tech in technicals:
+            if "datasets" not in tech.keys():
+                raise TechnicalAssociationException(
+                    f"Technical {tech['properties']['name']} is not associated to any dataset"
+                )
+            for d in tech["datasets"]:
+                if d in associated_datasets:
+                    raise TechnicalAssociationException(
+                        f"Dataset {d} has multiple technicals associated"
+                    )
+                associated_datasets.append(d)
+
+    return technicals
 
 
 def version_callback(value: bool) -> None:
@@ -394,8 +440,13 @@ def upload(
 
     technical = study.joinpath("technical.txt")
     if technical.is_file():
-        parse_file_tech(technical)
-        study_tree["technicals"] = technical
+        try:
+            technicals_list = parse_file_tech(technical, study_tree["datasets"])
+        except (UnknownPlatformException, TechnicalAssociationException) as exc:
+            return error(exc)
+        study_tree["technicals"] = technicals_list
+        error("TODO: create technicals")
+        error("TODO: connect technicals to datasets")
 
     # Do login
     r = request(
