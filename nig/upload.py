@@ -111,7 +111,7 @@ def request(
 
 
 def error(text: str, r: Optional[requests.Response] = None) -> None:
-    if r:
+    if r is not None:
         text += f". Status: {r.status_code}, response: {get_response(r)}"
     typer.secho(text, fg=typer.colors.RED)
     return None
