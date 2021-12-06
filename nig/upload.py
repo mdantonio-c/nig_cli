@@ -18,6 +18,10 @@ app = typer.Typer()
 POST = "post"
 PUT = "put"
 
+GB = 1_073_741_824
+MB = 1_048_576
+KB = 1024
+
 
 class HPOException(Exception):
     """Exception for invalid HPO"""
@@ -358,6 +362,66 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def pluralize(value: int, unit: str) -> str:
+    if value == 1:
+        return f"{value} {unit}"
+    return f"{value} {unit}s"
+
+
+# from restapi.utilities.time
+def get_time(seconds: int) -> str:
+
+    elements: List[str] = []
+    if seconds < 60:
+        elements.append(pluralize(seconds, "second"))
+
+    elif seconds < 3600:
+        m, s = divmod(seconds, 60)
+        elements.append(pluralize(m, "minute"))
+        if s > 0:
+            elements.append(pluralize(s, "second"))
+
+    elif seconds < 86400:
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        elements.append(pluralize(h, "hour"))
+        if m > 0 or s > 0:
+            elements.append(pluralize(m, "minute"))
+        if s > 0:
+            elements.append(pluralize(s, "second"))
+    else:
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        d, h = divmod(h, 24)
+        elements.append(pluralize(d, "day"))
+        if h > 0 or m > 0 or s > 0:
+            elements.append(pluralize(h, "hour"))
+        if m > 0 or s > 0:
+            elements.append(pluralize(m, "minute"))
+        if s > 0:
+            elements.append(pluralize(s, "second"))
+
+    return ", ".join(elements)
+
+
+# from controller.utilities.system
+def get_speed(value: float) -> str:
+
+    if value >= GB:
+        value /= GB
+        unit = "GB/s"
+    elif value >= MB:
+        value /= MB
+        unit = "MB/s"
+    elif value >= KB:
+        value /= KB
+        unit = "KB/s"
+    else:
+        unit = "B/s"
+
+    return f"{int(round(value, 2))}{unit}"
+
+
 @app.command()
 def upload(
     study: Path = typer.Argument(..., help="Path to the study"),
@@ -616,6 +680,8 @@ def upload(
             range_start = 0
 
             with open(file, "rb") as f:
+                start = datetime.now()
+                print(start)
                 with typer.progressbar(length=filesize, label="Uploading") as progress:
                     while True:
                         read_data = f.read(chunksize)
@@ -647,10 +713,16 @@ def upload(
                         progress.update(chunksize)
                         # update the range variable
                         range_start += chunksize
-                if r.status_code != 200:
-                    return error("Upload Failed", r)
 
-                success("Upload finished succesfully")
+                end = datetime.now()
+                seconds = (end - start).seconds or 1
+
+                t = get_time(seconds)
+                s = get_speed(filesize / seconds)
+                if r.status_code != 200:
+                    return error(f"Upload Failed in {t} ({s})", r)
+
+                success(f"Upload succesfully completed in {t} ({s})")
 
         error(f"TODO: set UPLOAD COMPLETE to {dataset_name}")
 
