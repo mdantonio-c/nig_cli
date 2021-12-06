@@ -597,7 +597,7 @@ def upload(
             phenotypes_uuid[phenotype["name"]] = r.json()
 
     # create phenotypes relationships
-    if study_tree["relationships"]:
+    if "relationships" in study_tree.keys():
         for son, parent_list in study_tree["relationships"].items():
             son_uuid = phenotypes_uuid.get(son)
             for parent in parent_list:
