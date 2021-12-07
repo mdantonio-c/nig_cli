@@ -1,6 +1,7 @@
 import json
 import re
 import tempfile
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -93,7 +94,7 @@ def request(
                 url,
                 data=data,
                 headers=headers,
-                timeout=30,
+                timeout=15,
                 cert=cert,
             )
 
@@ -102,14 +103,14 @@ def request(
                 url,
                 data=data,
                 headers=headers,
-                timeout=30,
+                timeout=15,
                 cert=cert,
             )
 
         return requests.get(
             url,
             headers=headers,
-            timeout=30,
+            timeout=15,
             cert=cert,
         )
 
@@ -422,6 +423,10 @@ def get_speed(value: float) -> str:
     return f"{int(round(value, 2))}{unit}"
 
 
+def get_ip() -> str:
+    return urllib.request.urlopen("https://ident.me").read().decode("utf8")
+
+
 @app.command()
 def upload(
     study: Path = typer.Argument(..., help="Path to the study"),
@@ -438,6 +443,7 @@ def upload(
         help="Password of the certificate",
     ),
     totp: str = typer.Option(..., prompt="2FA TOTP"),
+    chunk_size: int = typer.Option(16, "--chunk-size", help="Upload chunk size in MB"),
     version: bool = typer.Option(
         False,
         "--version",
@@ -456,6 +462,9 @@ def upload(
 
     if not certfile.exists():
         return error(f"Certificate not found: {certfile}")
+
+    if chunk_size > 16:
+        return error(f"The specified chunk size is too large: {chunk_size}")
 
     # check if the input file exists
     if not study.exists():
@@ -511,6 +520,9 @@ def upload(
         study_tree["technicals"] = technicals_list
         error("TODO: create technicals")
         error("TODO: connect technicals to datasets")
+
+    IP_ADDR = get_ip()
+    success(f"Your IP address is {IP_ADDR}")
 
     # Do login
     r = request(
@@ -676,33 +688,51 @@ def upload(
 
             success("Upload succesfully initialized")
 
-            chunksize = 16 * 1024 * 1024  # 16 mb
-            range_start = 0
+            chunk = chunk_size * 1024 * 1024
+            range_start = -1
 
             with open(file, "rb") as f:
                 start = datetime.now()
-                print(start)
                 with typer.progressbar(length=filesize, label="Uploading") as progress:
                     while True:
-                        read_data = f.read(chunksize)
+
+                        read_data = f.read(chunk)
+                        # No more data read from the file
                         if not read_data:
-                            break  # done
-                        if range_start != 0:
-                            range_start += 1
-                        range_max = range_start + chunksize
-                        if range_max > filesize:
-                            range_max = filesize
-                        headers[
-                            "Content-Range"
-                        ] = f"bytes {range_start}-{range_max}/{filesize}"
-                        r = request(
-                            method=PUT,
-                            url=f"{url}api/dataset/{uuid}/files/upload/{filename}",
-                            headers=headers,
-                            certfile=certfile,
-                            certpwd=certpwd,
-                            data=read_data,
-                        )
+                            break
+
+                        range_start += 1
+                        range_max = min(range_start + chunk, filesize)
+
+                        content_range = f"bytes {range_start}-{range_max}/{filesize}"
+                        headers["Content-Range"] = content_range
+
+                        try:
+                            r = request(
+                                method=PUT,
+                                url=f"{url}api/dataset/{uuid}/files/upload/{filename}",
+                                headers=headers,
+                                certfile=certfile,
+                                certpwd=certpwd,
+                                data=read_data,
+                            )
+                        except (
+                            requests.exceptions.ConnectionError,
+                            requests.exceptions.ReadTimeout,
+                        ) as r:
+
+                            IP = get_ip()
+                            if IP != IP_ADDR:
+                                return error(
+                                    f"\nUpload failed due to a network error ({str(r)})"
+                                    f"\nYour IP address changed from {IP_ADDR} to {IP}."
+                                    "\nDue to security policies the upload"
+                                    " can't be retried"
+                                )
+                            else:
+                                error(f"Upload Failed, retrying ({str(r)})")
+                                range_start -= 1
+                                continue
 
                         if r.status_code != 206:
                             if r.status_code == 200:
@@ -710,9 +740,9 @@ def upload(
                                 progress.update(filesize)
                                 break
                             return error("Upload Failed", r)
-                        progress.update(chunksize)
+                        progress.update(chunk)
                         # update the range variable
-                        range_start += chunksize
+                        range_start += chunk
 
                 end = datetime.now()
                 seconds = (end - start).seconds or 1
