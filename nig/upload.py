@@ -316,7 +316,7 @@ def parse_file_tech(
             properties = {}
             properties["name"] = name
             if date and date != "-":
-                properties["sequencing_date"] = date_from_string(date)
+                properties["sequencing_date"] = date_from_string(date).date()
             else:
                 properties["sequencing_date"] = ""
 
@@ -485,6 +485,7 @@ def upload(
 
     pedigree = study.joinpath("pedigree.txt")
     phenotypes_uuid: Dict[str, str] = {}
+    technicals_uuid: Dict[str, str] = {}
     if pedigree.is_file():
         try:
             phenotypes_list, relationships = parse_file_ped(
@@ -509,8 +510,6 @@ def upload(
         except (UnknownPlatformException, TechnicalAssociationException) as exc:
             return error(exc)
         study_tree["technicals"] = technicals_list
-        error("TODO: create technicals")
-        error("TODO: connect technicals to datasets")
 
     # Do login
     r = request(
@@ -615,6 +614,25 @@ def upload(
 
                 success(f"Succesfully created relationship between {son} and {parent}")
 
+    # create technicals
+    if study_tree["technicals"]:
+        for technical in study_tree["technicals"]:
+            r = request(
+                method=POST,
+                url=f"{url}api/study/{study_uuid}/technicals",
+                headers=headers,
+                certfile=certfile,
+                certpwd=certpwd,
+                data=technical["properties"],
+            )
+            if r.status_code != 200:
+                return error("Technical creation failed", r)
+
+            success(f"Succesfully created technical {technical['properties']['name']}")
+
+            # add the uuid in the technical uuid dictionary
+            technicals_uuid[technical["properties"]["name"]] = r.json()
+
     for dataset_name, files in study_tree["datasets"].items():
         r = request(
             method=POST,
@@ -646,6 +664,37 @@ def upload(
                 return error("Can't assign a phenotype to the dataset", r)
 
             success(f"Succesfully assigned phenotype to dataset {dataset_name}")
+
+        #  connect the technical to the dataset
+        if study_tree["technicals"]:
+            tech_uuid: Optional[str] = None
+            if len(study_tree["technicals"]) > 1:
+                for tech in study_tree["technicals"]:
+                    if dataset_name in tech["datasets"]:
+                        tech_uuid = technicals_uuid[tech["properties"]["name"]]
+                        break
+            else:
+                if (
+                    "datasets" not in study_tree["technicals"][0].keys()
+                    or "datasets" in study_tree["technicals"][0].keys()
+                    and dataset_name in study_tree["technicals"][0]["datasets"]
+                ):
+                    tech_uuid = technicals_uuid[
+                        study_tree["technicals"][0]["properties"]["name"]
+                    ]
+            if tech_uuid:
+                r = request(
+                    method=PUT,
+                    url=f"{url}api/dataset/{uuid}",
+                    headers=headers,
+                    certfile=certfile,
+                    certpwd=certpwd,
+                    data={"technical": tech_uuid},
+                )
+                if r.status_code != 204:
+                    return error("Can't assign a technical to the dataset", r)
+
+                success(f"Succesfully assigned technical to dataset {dataset_name}")
 
         for file in files:
             # get the data for the upload request
