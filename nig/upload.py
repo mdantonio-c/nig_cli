@@ -30,6 +30,10 @@ class RequestMethodError(Exception):
     """Exception for unknown request method"""
 
 
+class PhenotypeMalformedException(Exception):
+    """Exception for malformed pedigree files"""
+
+
 class HPOException(Exception):
     """Exception for invalid HPO"""
 
@@ -48,6 +52,10 @@ class PhenotypeNameException(Exception):
 
 class RelationshipException(Exception):
     """Exception for a relationship between non existing phenotypes"""
+
+
+class TechnicalMalformedException(Exception):
+    """Exception for malformed technical files"""
 
 
 class UnknownPlatformException(Exception):
@@ -213,7 +221,9 @@ def parse_file_ped(
             line = re.split(r"\t", row)
 
             if len(line) < 5:
-                continue
+                raise PhenotypeMalformedException(
+                    "Error in parsing the peedigree file: not all the mandatory fields are present"
+                )
 
             # pedigree_id = line[0]
             individual_id = line[1]
@@ -325,7 +335,9 @@ def parse_file_tech(
             line = re.split(r"\t", row)
 
             if len(line) < 4:
-                continue
+                raise TechnicalMalformedException(
+                    "Error in parsing the technical metadata file: not all the mandatory fields are present"
+                )
 
             name = line[0]
             date = line[1]
@@ -520,6 +532,7 @@ def upload(
                 pedigree, study_tree["datasets"]
             )
         except (
+            PhenotypeMalformedException,
             PhenotypeNameException,
             HPOException,
             ParsingSexException,
@@ -535,7 +548,11 @@ def upload(
     if technical.is_file():
         try:
             technicals_list = parse_file_tech(technical, study_tree["datasets"])
-        except (UnknownPlatformException, TechnicalAssociationException) as exc:
+        except (
+            TechnicalMalformedException,
+            UnknownPlatformException,
+            TechnicalAssociationException,
+        ) as exc:
             return error(exc)
         study_tree["technicals"] = technicals_list
 
