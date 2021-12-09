@@ -259,7 +259,7 @@ def parse_file_ped(
                 properties["age"] = int(age)
 
             birth_place = get_value("birthplace", header, line)
-            if birth_place is not None:
+            if birth_place is not None and birth_place != "-":
                 properties["birth_place_name"] = birth_place
 
             hpo = get_value("hpo", header, line)
@@ -615,7 +615,7 @@ def upload(
                     break
             for phenotype in study_tree["phenotypes"]:
                 # get the birth_place
-                if phenotype["birth_place_name"]:
+                if phenotype.get("birth_place_name"):
                     for geo_id, name in geodata.items():
                         if name == phenotype["birth_place_name"]:
                             phenotype["birth_place"] = geo_id
