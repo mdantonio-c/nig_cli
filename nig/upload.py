@@ -514,7 +514,10 @@ def upload(
                 if dat.is_file() and dat.name.endswith(".fastq.gz"):
                     study_tree["datasets"].setdefault(d.name, [])
                     study_tree["datasets"][d.name].append(dat)
-            if len(study_tree["datasets"][d.name]) > 2:
+            if (
+                study_tree["datasets"].get(d.name)
+                and len(study_tree["datasets"][d.name]) > 2
+            ):
                 # the dataset is invalid because contains too many fastq
                 return error(
                     f"Dataset {d.name} contains too many fastq files: max files allowed are 2 par dataset"
