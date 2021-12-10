@@ -222,7 +222,7 @@ def parse_file_ped(
 
             if len(line) < 5:
                 raise PhenotypeMalformedException(
-                    "Error in parsing the peedigree file: not all the mandatory fields are present"
+                    "Error parsing the peedigree file: not all the mandatory fields are present"
                 )
 
             # pedigree_id = line[0]
@@ -243,7 +243,7 @@ def parse_file_ped(
                 sex = "female"
             else:
                 raise ParsingSexException(
-                    f"Unable to parse {sex} sex for {individual_id} phenotype: Please use M F notation"
+                    f"Can't parse {sex} sex for {individual_id}: Please use M F notation"
                 )
 
             properties = {}
@@ -268,7 +268,7 @@ def parse_file_ped(
                 for hpo_el in hpo_list:
                     if not re.match(r"HP:[0-9]+$", hpo_el):
                         raise HPOException(
-                            f"Error in parsing phenotype {individual_id}: {hpo_el} is an invalid HPO"
+                            f"Error parsing phenotype {individual_id}: {hpo_el} is an invalid HPO"
                         )
                 properties["hpo"] = json.dumps(hpo_list)
 
@@ -294,7 +294,7 @@ def parse_file_ped(
             for parent in family:
                 if parent not in phenotype_list:
                     raise RelationshipException(
-                        f"Error in relationship between {son} and {parent}: Phenotype {parent} does not exists"
+                        f"Error in relationship between {son} and {parent}: Phenotype {parent} does not exist"
                     )
 
     return phenotypes, relationships
@@ -336,7 +336,7 @@ def parse_file_tech(
 
             if len(line) < 4:
                 raise TechnicalMalformedException(
-                    "Error in parsing the technical metadata file: not all the mandatory fields are present"
+                    "Error parsing the technical metadata file: not all the mandatory fields are present"
                 )
 
             name = line[0]
@@ -366,7 +366,7 @@ def parse_file_tech(
                 for dataset_name in dataset_list:
                     if dataset_name not in datasets.keys():
                         raise TechnicalAssociationException(
-                            f"Error for {name} technical: associated dataset {dataset_name} does not exists"
+                            f"Error for {name} technical: associated dataset {dataset_name} does not exist"
                         )
                 technical["datasets"] = dataset_list
             technicals.append(technical)
@@ -441,17 +441,17 @@ def get_speed(value: float) -> str:
 
     if value >= GB:
         value /= GB
-        unit = "GB/s"
+        unit = " GB/s"
     elif value >= MB:
         value /= MB
-        unit = "MB/s"
+        unit = " MB/s"
     elif value >= KB:
         value /= KB
-        unit = "KB/s"
+        unit = " KB/s"
     else:
-        unit = "B/s"
+        unit = " B/s"
 
-    return f"{int(round(value, 2))}{unit}"
+    return f"{round(value, 2)}{unit}"
 
 
 def get_ip() -> str:
@@ -517,7 +517,7 @@ def upload(
             if len(study_tree["datasets"][d.name]) > 2:
                 # the dataset is invalid because contains too many fastq
                 return error(
-                    f"Dataset {d.name} contains too many fastq files: max files allowed are 2 par dataset"
+                    f"Dataset {d.name} contains too many fastq files: max allowed files are 2 per dataset"
                 )
 
     if not study_tree["datasets"]:
@@ -780,6 +780,7 @@ def upload(
 
                 chunk = chunk_size * 1024 * 1024
                 range_start = -1
+                prev_position = 0
 
                 with open(file, "rb") as f:
                     start = datetime.now()
@@ -788,12 +789,14 @@ def upload(
                     ) as progress:
                         while True:
 
+                            prev_position = f.tell()
                             read_data = f.read(chunk)
                             # No more data read from the file
                             if not read_data:
                                 break
 
                             range_start += 1
+
                             range_max = min(range_start + chunk, filesize)
 
                             content_range = (
@@ -802,6 +805,7 @@ def upload(
                             headers["Content-Range"] = content_range
 
                             try:
+
                                 r = request(
                                     method=PUT,
                                     url=f"{url}api/dataset/{uuid}/files/upload/{filename}",
@@ -818,13 +822,14 @@ def upload(
                                 IP = get_ip()
                                 if IP != IP_ADDR:
                                     return error(
-                                        f"\nUpload failed due to a network error ({str(r)})"
+                                        f"\nUpload failed due to a network error ({r})"
                                         f"\nYour IP address changed from {IP_ADDR} to {IP}."
                                         "\nDue to security policies the upload"
                                         " can't be retried"
                                     )
                                 else:
                                     error(f"Upload Failed, retrying ({str(r)})")
+                                    f.seek(prev_position)
                                     range_start -= 1
                                     continue
 
