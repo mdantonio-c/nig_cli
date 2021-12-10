@@ -259,7 +259,7 @@ def parse_file_ped(
                 properties["age"] = int(age)
 
             birth_place = get_value("birthplace", header, line)
-            if birth_place is not None:
+            if birth_place is not None and birth_place != "-":
                 properties["birth_place_name"] = birth_place
 
             hpo = get_value("hpo", header, line)
@@ -514,7 +514,10 @@ def upload(
                 if dat.is_file() and dat.name.endswith(".fastq.gz"):
                     study_tree["datasets"].setdefault(d.name, [])
                     study_tree["datasets"][d.name].append(dat)
-            if len(study_tree["datasets"][d.name]) > 2:
+            if (
+                study_tree["datasets"].get(d.name)
+                and len(study_tree["datasets"][d.name]) > 2
+            ):
                 # the dataset is invalid because contains too many fastq
                 return error(
                     f"Dataset {d.name} contains too many fastq files: max allowed files are 2 per dataset"
@@ -615,7 +618,7 @@ def upload(
                     break
             for phenotype in study_tree["phenotypes"]:
                 # get the birth_place
-                if phenotype["birth_place_name"]:
+                if phenotype.get("birth_place_name"):
                     for geo_id, name in geodata.items():
                         if name == phenotype["birth_place_name"]:
                             phenotype["birth_place"] = geo_id
