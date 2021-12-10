@@ -511,7 +511,11 @@ def upload(
     for d in study.iterdir():
         if d.is_dir():
             for dat in d.iterdir():
-                if dat.is_file() and dat.name.endswith(".fastq.gz"):
+                if (
+                    dat.is_file()
+                    and dat.name.endswith(".fastq.gz")
+                    and dat.stat().st_size >= 1
+                ):
                     study_tree["datasets"].setdefault(d.name, [])
                     study_tree["datasets"][d.name].append(dat)
             if (
