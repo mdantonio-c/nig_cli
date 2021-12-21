@@ -390,7 +390,7 @@ def parse_file_tech(
 
 def version_callback(value: bool) -> None:
     if value:
-        typer.echo("NIG Upload version: 0.2")
+        typer.echo("NIG Upload version: 0.3")
         raise typer.Exit()
 
 
