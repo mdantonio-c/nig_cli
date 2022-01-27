@@ -465,7 +465,7 @@ def parse_file_tech(
 
 def version_callback(value: bool) -> None:
     if value:
-        typer.echo("NIG Upload version: 0.3")
+        typer.echo("NIG Upload version: 0.4")
         raise typer.Exit()
 
 
@@ -558,13 +558,13 @@ def validate_study(study: Path) -> Optional[Dict[str, Any]]:
             ):
                 # the dataset is invalid because contains too many fastq
                 warning(
-                    f"Uploading of {study.name} skipped: Dataset {d.name} contains too many fastq files: max allowed files are 2 per dataset"
+                    f"Upload of {study.name} skipped: Dataset {d.name} contains too many fastq files: max allowed files are 2 per dataset"
                 )
                 return None
 
     if not study_tree["datasets"]:
         warning(
-            f"Uploading of {study.name} skipped: No files found for upload in: {study}"
+            f"Upload of {study.name} skipped: No files found for upload in: {study}"
         )
         return None
 
@@ -582,7 +582,7 @@ def validate_study(study: Path) -> Optional[Dict[str, Any]]:
             AgeException,
             RelationshipException,
         ) as exc:
-            warning(f"Uploading of {study.name} skipped: {exc}")
+            warning(f"Upload of {study.name} skipped: {exc}")
             return None
 
         study_tree["phenotypes"] = phenotypes_list
@@ -597,7 +597,7 @@ def validate_study(study: Path) -> Optional[Dict[str, Any]]:
             UnknownPlatformException,
             TechnicalAssociationException,
         ) as exc:
-            warning(f"Uploading of {study.name} skipped: {exc}")
+            warning(f"Upload of {study.name} skipped: {exc}")
             return None
 
         study_tree["technicals"] = technicals_list
