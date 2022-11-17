@@ -465,7 +465,7 @@ def parse_file_tech(
 
 def version_callback(value: bool) -> None:
     if value:
-        typer.echo("NIG Upload version: 0.4")
+        typer.echo("NIG Upload version: 0.4.1")
         raise typer.Exit()
 
 
@@ -652,15 +652,17 @@ def upload_study(
     study_uuid = r.json()
 
     # create phenotypes
+    phenotypes_uuid: Dict[str, str] = {}
     if study_tree["phenotypes"]:
         # get geodata list
+        headers["Content-Type"] = "application/json"
         r = request(
             method=POST,
             url=f"{url}api/study/{study_uuid}/phenotypes",
             headers=headers,
             certfile=certfile,
             certpwd=certpwd,
-            data={"get_schema": True},
+            data='{"get_schema": true}',
         )
         if r.status_code != 200:
             raise ResourceRetrievingException("Can't retrieve geodata list", r)
@@ -669,7 +671,6 @@ def upload_study(
             if el["key"] == "birth_place":
                 geodata = el["options"]
                 break
-        phenotypes_uuid: Dict[str, str] = {}
         for phenotype in study_tree["phenotypes"]:
             # get the birth_place
             if phenotype.get("birth_place_name"):
@@ -685,6 +686,7 @@ def upload_study(
                 # delete birth_place_name key
                 del phenotype["birth_place_name"]
 
+            headers.pop("Content-Type", None)
             r = request(
                 method=POST,
                 url=f"{url}api/study/{study_uuid}/phenotypes",
