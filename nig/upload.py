@@ -1,6 +1,7 @@
 import json
 import re
 import tempfile
+import time
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime
@@ -171,42 +172,80 @@ def request(
     data: Union[bytes, Dict[str, Any]],
     headers: Optional[Dict[str, Any]] = None,
 ) -> requests.Response:
+    MAX_RETRIES = 3
+    SLEEP_TIME = 10
 
     with pfx_to_pem(certfile, certpwd) as cert:
         if method == POST:
-            return requests.post(
-                url,
-                data=data,
-                headers=headers,
-                timeout=15,
-                cert=cert,
-            )
+            for i in range(MAX_RETRIES):
+                try:
+                    r = requests.post(
+                        url,
+                        data=data,
+                        headers=headers,
+                        timeout=15,
+                        cert=cert,
+                    )
+                    return r
+                except Exception as e:
+                    error(f"The request raised the following error {e}")
+                    if i < MAX_RETRIES:
+                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                    time.sleep(SLEEP_TIME)
+                    continue
 
         if method == PUT:
-            return requests.put(
-                url,
-                data=data,
-                headers=headers,
-                timeout=15,
-                cert=cert,
-            )
+            for i in range(MAX_RETRIES):
+                try:
+                    r = requests.put(
+                        url,
+                        data=data,
+                        headers=headers,
+                        timeout=15,
+                        cert=cert,
+                    )
+                    return r
+                except Exception as e:
+                    error(f"The request raised the following error {e}")
+                    if i < MAX_RETRIES:
+                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                    time.sleep(SLEEP_TIME)
+                    continue
 
         if method == PATCH:
-            return requests.patch(
-                url,
-                data=data,
-                headers=headers,
-                timeout=15,
-                cert=cert,
-            )
+            for i in range(MAX_RETRIES):
+                try:
+                    r = requests.patch(
+                        url,
+                        data=data,
+                        headers=headers,
+                        timeout=15,
+                        cert=cert,
+                    )
+                    return r
+                except Exception as e:
+                    error(f"The request raised the following error {e}")
+                    if i < MAX_RETRIES:
+                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                    time.sleep(SLEEP_TIME)
+                    continue
 
         if method == GET:
-            return requests.get(
-                url,
-                headers=headers,
-                timeout=15,
-                cert=cert,
-            )
+            for i in range(MAX_RETRIES):
+                try:
+                    r = requests.get(
+                        url,
+                        headers=headers,
+                        timeout=15,
+                        cert=cert,
+                    )
+                    return r
+                except Exception as e:
+                    error(f"The request raised the following error {e}")
+                    if i < MAX_RETRIES:
+                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                    time.sleep(SLEEP_TIME)
+                    continue
 
         # if hasn't returned yet is because the method is unknown
         raise RequestMethodError(f"method {method} not allowed")
@@ -226,6 +265,11 @@ def warning(text: str) -> None:
 
 def success(text: str) -> None:
     typer.secho(text, fg=typer.colors.GREEN)
+    return None
+
+
+def debug(text: str) -> None:
+    typer.secho(text, fg=typer.colors.BLUE)
     return None
 
 
@@ -552,6 +596,11 @@ def validate_study(study: Path) -> Optional[Dict[str, Any]]:
                 ):
                     study_tree["datasets"].setdefault(d.name, [])
                     study_tree["datasets"][d.name].append(dat)
+                else:
+                    warning(f"File {dat} skipped")
+                    debug(
+                        f"DEBUG : skipped because is not a file? { not dat.is_file()}, skipped because is empty? {dat.stat().st_size < 1}, has the correct file extension (.fastq.gz)? {dat.name.endswith('.fastq.gz')}"
+                    )
             if (
                 study_tree["datasets"].get(d.name)
                 and len(study_tree["datasets"][d.name]) > 2
@@ -561,6 +610,9 @@ def validate_study(study: Path) -> Optional[Dict[str, Any]]:
                     f"Upload of {study.name} skipped: Dataset {d.name} contains too many fastq files: max allowed files are 2 per dataset"
                 )
                 return None
+        else:
+            if d.name != "technical.txt" and d.name != "pedigree.txt":
+                warning(f"{d} is not a directory")
 
     if not study_tree["datasets"]:
         warning(
