@@ -136,6 +136,9 @@ class UploadException(Exception):
             self.message += f". Code: {r.status_code}, response: {get_response(r)}"
         super().__init__(self.message)
 
+class RetrieveExistingStudyException(Exception):
+    """Exception for not find the already esxisting study """
+
 
 @contextmanager
 def pfx_to_pem(pfx_path: Path, pfx_password: str) -> Generator[str, None, None]:
@@ -656,6 +659,193 @@ def validate_study(study: Path) -> Optional[Dict[str, Any]]:
 
     return study_tree
 
+def update_study_tree(study: Path, study_tree: Dict[str, Any] ,url: str, headers: Dict[str, str] , certfile: Path, certpwd: str) -> Optional[Dict[str, Any]]:
+    updated_study_tree: Optional[Dict[str, Any]] = {}
+    # get the study uuid
+    study_uuid: Optional[str]= None
+    r = request(
+        method=GET,
+        url=f"{url}api/study",
+        headers=headers,
+        certfile=certfile,
+        certpwd=certpwd,
+        data={},
+    )
+    if r.status_code != 200:
+        raise ResourceRetrievingException("Can't retrieve user's studies list", r)
+
+    res = r.json()
+    if res:
+        for el in res:
+            if el["name"] == study_tree["name"]:
+                study_uuid = el["uuid"]
+                break
+    if not study_uuid:
+        raise RetrieveExistingStudyException(f" Study {study_tree['name']} is supposed to be already existing but it can't be found")
+
+    updated_study_tree["study_uuid"] = study_uuid
+    updated_study_tree["name"] = study_tree["name"]
+    # get the already existing datasets
+    r = request(
+        method=GET,
+        url=f"{url}api/study/{study_uuid}/datasets",
+        headers=headers,
+        certfile=certfile,
+        certpwd=certpwd,
+        data={},
+    )
+    if r.status_code != 200:
+        raise ResourceRetrievingException(
+            "Can't retrieve user's datasets list", r
+        )
+
+    res = r.json()
+    datasets_map: Optional[Dict[str,Dict[str,str]]] = {}
+    if res:
+        for el in res:
+            dataset_descr = {"uuid":el["uuid"], "status": el["status"]}
+            datasets_map[el["name"]] = dataset_descr
+    if datasets_map:
+        updated_study_tree['datasets']={}
+        # check what datasets has already to be uploaded
+        for d in study_tree['datasets'].keys():
+            if d in datasets_map.keys():
+                if not datasets_map[d]["status"]:
+                    warning(f"WARNING: Dataset {d} is not checked as ready to be analyzed")
+                    # get the files list
+                    r = request(
+                        method=GET,
+                        url=f"{url}api/dataset/{datasets_map[d]['uuid']}/files",
+                        headers=headers,
+                        certfile=certfile,
+                        certpwd=certpwd,
+                        data={},
+                    )
+                    if r.status_code != 200:
+                        raise ResourceRetrievingException(
+                            "Can't retrieve dataset' files list", r
+                        )
+
+                    res = r.json()
+                    files_map: Optional[Dict[str, Dict[str, str]]] = {}
+                    if res:
+                        for el in res:
+                            file_el= {"status":el["status"]}
+                            files_map[el["name"]] = file_el
+
+                    # check if the files has been correctly uploaded
+                    for f in study_tree['datasets'][d]:
+                        if f.name not in files_map.keys() or files_map[f.name]["status"] != "uploaded":
+                            error(f"File {f.name} in Dataset {d} wasn't correctly uploaded: Please check")
+
+                # remove the dataset from the list of dataset to upload
+                warning(f"Dataset {d} already existing: it will not be updated")
+            else:
+                updated_study_tree['datasets'][d] = study_tree['datasets'][d]
+
+    if 'datasets' not in updated_study_tree.keys():
+        warning(
+            f"Update of Study {study_tree['name']} skipped: No new datasets to add has been found"
+        )
+        return None
+
+    # check the phenotypes
+    phenotypes_to_upload: Optional[List[str]] = []
+    if study_tree["phenotypes"]:
+        # get the study phenotypes
+        r = request(
+            method=GET,
+            url=f"{url}api/study/{study_uuid}/phenotypes",
+            headers=headers,
+            certfile=certfile,
+            certpwd=certpwd,
+            data={},
+        )
+        if r.status_code != 200:
+            raise ResourceRetrievingException("Can't retrieve user's studies list", r)
+
+        res = r.json()
+        existing_phenotypes: Dict[str,str] = {}
+        if res:
+            for el in res:
+                existing_phenotypes[el["name"]] = el["uuid"]
+
+        updated_study_tree['phenotypes']=[]
+        for p in study_tree['phenotypes']:
+            if p["name"] in existing_phenotypes.keys():
+                # don't add the phenotypes to the list of phenotypes to upload
+                warning(f"Phenotype {p['name']} already existing: it will not be updated")
+                # mark the phenotype as already existing: this will be only used in case of relationships creation
+                p["uuid"] = existing_phenotypes[p["name"]]
+            else:
+                if p["name"] not in updated_study_tree['datasets'].keys():
+                    raise PhenotypeNameException(f"Phenotype {p['name']} has to be created but is not related to any dataset already to be uploaded: Please check")
+                phenotypes_to_upload.append(p["name"])
+            updated_study_tree['phenotypes'].append(p)
+
+
+    # check that the relationships are related to not already existing phenotypes
+    if "relationships" in study_tree.keys():
+        if not phenotypes_to_upload:
+            warning(f"No new phenotypes to add: relationships between already existing phenotypes will not be updated")
+            study_tree.pop("relationships")
+        else:
+            updated_study_tree["relationships"]={}
+            for r in study_tree["relationships"].keys():
+                if r not in phenotypes_to_upload:
+                    warning(f"Relationship related to already existing Phenotype{r} will not be updated")
+                else:
+                    updated_study_tree["relationships"][r]=study_tree["relationships"][r]
+
+
+    # check the technicals
+    if study_tree["technicals"]:
+        # get the study technicals
+        r = request(
+            method=GET,
+            url=f"{url}api/study/{study_uuid}/technicals",
+            headers=headers,
+            certfile=certfile,
+            certpwd=certpwd,
+            data={},
+        )
+        if r.status_code != 200:
+            raise ResourceRetrievingException("Can't retrieve user's studies list", r)
+
+        res = r.json()
+        existing_technicals: Dict[str,str] = {}
+        if res:
+            for el in res:
+                existing_technicals[el["name"]] = el["uuid"]
+
+        updated_study_tree["technicals"]=[]
+        for t in study_tree["technicals"]:
+            # check if it is related to a dataset to be uploaded
+            if "datasets" in t.keys():
+                technical_datasets: Optional[List[str]] = []
+                for d in t["datasets"]:
+                    if d in updated_study_tree["datasets"].keys():
+                        technical_datasets.append(d)
+                    else:
+                        if t["properties"]["name"] not in existing_technicals.keys():
+                            raise TechnicalAssociationException(f"Technical {t['properties']['name']} has to be created but is not related to any dataset already to be uploaded: Please check")
+                # if now this list is empty the technical can be removed from the upload list
+                if not technical_datasets:
+                    continue
+                else:
+                    t["datasets"] = technical_datasets
+                    updated_study_tree["technicals"].append(t)
+            if t["properties"]["name"] in existing_technicals.keys():
+                warning(f"Technical {t['properties']['name']} already existing: it will not be updated")
+                # mark the technical as already existing: this will be only associated to the new datasets
+                t["uuid"] = existing_technicals[t["properties"]["name"]]
+            # add the technical to the updated tree
+            updated_study_tree["technicals"].append(t)
+
+    
+
+    return updated_study_tree
+
 
 def get_technical_uuid(
     study_tree: Dict[str, Any], dataset_name: str, technicals_uuid: Dict[str, str]
@@ -687,73 +877,90 @@ def upload_study(
     chunk_size: int,
     IP_ADDR: str,
 ) -> None:
-    study_name = study_tree["name"]
-    r = request(
-        method=POST,
-        url=f"{url}api/study",
-        headers=headers,
-        certfile=certfile,
-        certpwd=certpwd,
-        data={"name": study_name, "description": ""},
-    )
-    if r.status_code != 200:
-        raise ResourceCreationException("Study creation failed", r)
+    # if study_uuid is in the study_tree it means that we are in the already existing study use case and there is no need to create the study
+    if "study_uuid" not in study_tree.keys():
+        study_name = study_tree["name"]
+        r = request(
+            method=POST,
+            url=f"{url}api/study",
+            headers=headers,
+            certfile=certfile,
+            certpwd=certpwd,
+            data={"name": study_name, "description": ""},
+        )
+        if r.status_code != 200:
+            raise ResourceCreationException("Study creation failed", r)
 
-    success(f"Succesfully created study {study_name}")
+        success(f"Succesfully created study {study_name}")
 
-    study_uuid = r.json()
+        study_uuid = r.json()
+    else:
+        study_uuid = study_tree["study_uuid"]
 
     # create phenotypes
     phenotypes_uuid: Dict[str, str] = {}
     if study_tree["phenotypes"]:
-        # get geodata list
-        headers["Content-Type"] = "application/json"
-        r = request(
-            method=POST,
-            url=f"{url}api/study/{study_uuid}/phenotypes",
-            headers=headers,
-            certfile=certfile,
-            certpwd=certpwd,
-            data='{"get_schema": true}',
-        )
-        if r.status_code != 200:
-            raise ResourceRetrievingException("Can't retrieve geodata list", r)
+        are_phenotypes_to_upload = False
+        # manage existing study use case: check if there are phenotype to upload
+        for p in study_tree["phenotypes"]:
+            if "uuid" in p.keys():
+                phenotypes_uuid[p["name"]] = p["uuid"]
+            else:
+                # there is at least one phenotype to upload
+                are_phenotypes_to_upload = True
 
-        for el in r.json():
-            if el["key"] == "birth_place":
-                geodata = el["options"]
-                break
-        for phenotype in study_tree["phenotypes"]:
-            # get the birth_place
-            if phenotype.get("birth_place_name"):
-                for geo_id, name in geodata.items():
-                    if name == phenotype["birth_place_name"]:
-                        phenotype["birth_place"] = geo_id
-                        break
-                if "birth_place" not in phenotype.keys():
-                    raise GeodataException(
-                        f"Error for phenotype {phenotype['name']}: {phenotype['birth_place_name']} birth place not found"
-                    )
-
-                # delete birth_place_name key
-                del phenotype["birth_place_name"]
-
-            headers.pop("Content-Type", None)
+        if are_phenotypes_to_upload:
+            # get geodata list
+            headers["Content-Type"] = "application/json"
             r = request(
                 method=POST,
                 url=f"{url}api/study/{study_uuid}/phenotypes",
                 headers=headers,
                 certfile=certfile,
                 certpwd=certpwd,
-                data=phenotype,
+                data='{"get_schema": true}',
             )
             if r.status_code != 200:
-                raise ResourceCreationException("Phenotype creation failed", r)
+                raise ResourceRetrievingException("Can't retrieve geodata list", r)
 
-            success(f"Succesfully created phenotype {phenotype['name']}")
+            for el in r.json():
+                if el["key"] == "birth_place":
+                    geodata = el["options"]
+                    break
+            for phenotype in study_tree["phenotypes"]:
+                # check if we are in the already existing study use case and the phenotype already exists
+                if "uuid" not in phenotype.keys():
+                    # get the birth_place
+                    if phenotype.get("birth_place_name"):
+                        for geo_id, name in geodata.items():
+                            if name == phenotype["birth_place_name"]:
+                                phenotype["birth_place"] = geo_id
+                                break
+                        if "birth_place" not in phenotype.keys():
+                            raise GeodataException(
+                                f"Error for phenotype {phenotype['name']}: {phenotype['birth_place_name']} birth place not found"
+                            )
 
-            # add the uuid in the phenotype uuid dictionary
-            phenotypes_uuid[phenotype["name"]] = r.json()
+                        # delete birth_place_name key
+                        del phenotype["birth_place_name"]
+
+                    headers.pop("Content-Type", None)
+                    r = request(
+                        method=POST,
+                        url=f"{url}api/study/{study_uuid}/phenotypes",
+                        headers=headers,
+                        certfile=certfile,
+                        certpwd=certpwd,
+                        data=phenotype,
+                    )
+                    if r.status_code != 200:
+                        raise ResourceCreationException("Phenotype creation failed", r)
+
+                    success(f"Succesfully created phenotype {phenotype['name']}")
+
+                    # add the uuid in the phenotype uuid dictionary
+                    phenotypes_uuid[phenotype["name"]] = r.json()
+
 
     # create phenotypes relationships
     if "relationships" in study_tree.keys():
@@ -778,21 +985,26 @@ def upload_study(
     technicals_uuid: Dict[str, str] = {}
     if study_tree["technicals"]:
         for technical in study_tree["technicals"]:
-            r = request(
-                method=POST,
-                url=f"{url}api/study/{study_uuid}/technicals",
-                headers=headers,
-                certfile=certfile,
-                certpwd=certpwd,
-                data=technical["properties"],
-            )
-            if r.status_code != 200:
-                raise ResourceCreationException("Technical creation failed", r)
+            # check if we are in the already existing study use case and the technical already exists
+            if "uuid" not in technical.keys():
+                r = request(
+                    method=POST,
+                    url=f"{url}api/study/{study_uuid}/technicals",
+                    headers=headers,
+                    certfile=certfile,
+                    certpwd=certpwd,
+                    data=technical["properties"],
+                )
+                if r.status_code != 200:
+                    raise ResourceCreationException("Technical creation failed", r)
+    
+                success(f"Succesfully created technical {technical['properties']['name']}")
 
-            success(f"Succesfully created technical {technical['properties']['name']}")
-
-            # add the uuid in the technical uuid dictionary
-            technicals_uuid[technical["properties"]["name"]] = r.json()
+                # add the uuid in the technical uuid dictionary
+                technicals_uuid[technical["properties"]["name"]] = r.json()
+            else:
+                # add the uuid in the technical uuid dictionary
+                technicals_uuid[technical["properties"]["name"]] = technical["uuid"]
 
     for dataset_name, files in study_tree["datasets"].items():
         r = request(
@@ -1080,7 +1292,9 @@ def upload(
 
         for s in studies_to_upload:
             # check if the study already exists
+            is_existing_study = False
             if s.name in existing_studies.keys():
+                is_existing_study = True
                 # get the list of the datasets in the study to upload
                 datasets_to_upload: List[str] = []
                 for d in s.iterdir():
@@ -1105,11 +1319,14 @@ def upload(
                 if res:
                     for el in res:
                         existing_datasets.append(el["name"])
-                # if the two list differs throw an error
+                # if the two list differs ask if the user wants to continue
                 if not set(datasets_to_upload) == set(existing_datasets):
-                    return error(
-                        f"Study {s.name} already exists but its datasets differ from the already uploaded: Please check"
-                    )
+                    warning(f"WARNING: Study {s.name} already exists but its datasets differ from the already uploaded")
+                    continue_upload = typer.confirm("Continue the upload anyway? Note that the already existing datasets, technicals and samples of this study will not be updated")
+                    if not continue_upload:
+                        return error(
+                            f"Upload of already existing Study {s.name} has been aborted by the user"
+                        )
                 else:
                     # the study has already been uploaded
                     warning(f"Study {s.name} already exists: skipped")
@@ -1120,6 +1337,21 @@ def upload(
             if not study_tree:
                 # the study hasn't passed the validation
                 continue
+            # if the study already exists check which elements of the study tree needs to be uploaded
+            if is_existing_study:
+                study_tree = update_study_tree(s, study_tree, url, headers, certfile, certpwd)
+                if not study_tree:
+                    continue
+                approve_differences = typer.confirm(
+                    f"The following datasets are missing from the Study {s.name} and will be uploaded: {[d for d in study_tree['datasets'].keys()]}. "
+                    f"The following phenotypes are missing from the Study {s.name} and will be uploaded: {[p['name'] for p in study_tree['phenotypes'] if 'uuid' not in p.keys()]}."
+                    f"The following technicals are missing from the Study {s.name} and will be uploaded: {[t['properties']['name'] for t in study_tree['technicals'] if 'uuid' not in t.keys()]}."
+                    f"Proceed with the uploading?")
+                if not approve_differences:
+                    return error(
+                        f"Upload of already existing Study {s.name} has been aborted by the user"
+                    )
+
             # upload the study
             upload_study(
                 study_tree, url, headers, certfile, certpwd, chunk_size, IP_ADDR
