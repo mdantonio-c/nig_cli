@@ -3,14 +3,12 @@ import re
 import tempfile
 import time
 import urllib.request
-from contextlib import contextmanager
 from datetime import datetime
 from mimetypes import MimeTypes
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 import dateutil.parser
-import OpenSSL.crypto
 import pytz
 import requests
 import typer
@@ -137,118 +135,86 @@ class UploadException(Exception):
         super().__init__(self.message)
 
 
-@contextmanager
-def pfx_to_pem(pfx_path: Path, pfx_password: str) -> Generator[str, None, None]:
-    """Decrypts the .pfx file to be used with requests."""
-    with tempfile.NamedTemporaryFile(suffix=".pem") as t_pem:
-        f_pem = open(t_pem.name, "wb")
-        pfx = open(pfx_path, "rb").read()
-        p12 = OpenSSL.crypto.load_pkcs12(pfx, pfx_password.encode())
-        f_pem.write(
-            OpenSSL.crypto.dump_privatekey(
-                OpenSSL.crypto.FILETYPE_PEM, p12.get_privatekey()
-            )
-        )
-        f_pem.write(
-            OpenSSL.crypto.dump_certificate(
-                OpenSSL.crypto.FILETYPE_PEM, p12.get_certificate()
-            )
-        )
-        ca = p12.get_ca_certificates()
-        if ca is not None:
-            for cert in ca:
-                f_pem.write(
-                    OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
-                )
-        f_pem.close()
-        yield t_pem.name
 
 
 def request(
     method: str,
     url: str,
-    certfile: Path,
-    certpwd: str,
     data: Union[bytes, Dict[str, Any]],
     headers: Optional[Dict[str, Any]] = None,
 ) -> requests.Response:
     MAX_RETRIES = 3
     SLEEP_TIME = 10
 
-    with pfx_to_pem(certfile, certpwd) as cert:
-        if method == POST:
-            for i in range(MAX_RETRIES):
-                try:
-                    r = requests.post(
-                        url,
-                        data=data,
-                        headers=headers,
-                        timeout=15,
-                        cert=cert,
-                    )
-                    return r
-                except Exception as e:
-                    error(f"The request raised the following error {e}")
-                    if i < MAX_RETRIES:
-                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
-                    time.sleep(SLEEP_TIME)
-                    continue
+    if method == POST:
+        for i in range(MAX_RETRIES):
+            try:
+                r = requests.post(
+                    url,
+                    data=data,
+                    headers=headers,
+                    timeout=15
+                )
+                return r
+            except Exception as e:
+                error(f"The request raised the following error {e}")
+                if i < MAX_RETRIES:
+                    debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                time.sleep(SLEEP_TIME)
+                continue
 
-        if method == PUT:
-            for i in range(MAX_RETRIES):
-                try:
-                    r = requests.put(
-                        url,
-                        data=data,
-                        headers=headers,
-                        timeout=15,
-                        cert=cert,
-                    )
-                    return r
-                except Exception as e:
-                    error(f"The request raised the following error {e}")
-                    if i < MAX_RETRIES:
-                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
-                    time.sleep(SLEEP_TIME)
-                    continue
+    if method == PUT:
+        for i in range(MAX_RETRIES):
+            try:
+                r = requests.put(
+                    url,
+                    data=data,
+                    headers=headers,
+                    timeout=15
+                )
+                return r
+            except Exception as e:
+                error(f"The request raised the following error {e}")
+                if i < MAX_RETRIES:
+                    debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                time.sleep(SLEEP_TIME)
+                continue
 
-        if method == PATCH:
-            for i in range(MAX_RETRIES):
-                try:
-                    r = requests.patch(
-                        url,
-                        data=data,
-                        headers=headers,
-                        timeout=15,
-                        cert=cert,
-                    )
-                    return r
-                except Exception as e:
-                    error(f"The request raised the following error {e}")
-                    if i < MAX_RETRIES:
-                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
-                    time.sleep(SLEEP_TIME)
-                    continue
+    if method == PATCH:
+        for i in range(MAX_RETRIES):
+            try:
+                r = requests.patch(
+                    url,
+                    data=data,
+                    headers=headers,
+                    timeout=15
+                )
+                return r
+            except Exception as e:
+                error(f"The request raised the following error {e}")
+                if i < MAX_RETRIES:
+                    debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                time.sleep(SLEEP_TIME)
+                continue
 
-        if method == GET:
-            for i in range(MAX_RETRIES):
-                try:
-                    r = requests.get(
-                        url,
-                        headers=headers,
-                        timeout=15,
-                        cert=cert,
-                    )
-                    return r
-                except Exception as e:
-                    error(f"The request raised the following error {e}")
-                    if i < MAX_RETRIES:
-                        debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
-                    time.sleep(SLEEP_TIME)
-                    continue
+    if method == GET:
+        for i in range(MAX_RETRIES):
+            try:
+                r = requests.get(
+                    url,
+                    headers=headers,
+                    timeout=15
+                )
+                return r
+            except Exception as e:
+                error(f"The request raised the following error {e}")
+                if i < MAX_RETRIES:
+                    debug(f"Retry n.{i + 1} will be done in {SLEEP_TIME} seconds")
+                time.sleep(SLEEP_TIME)
+                continue
 
-        # if hasn't returned yet is because the method is unknown
-        raise RequestMethodError(f"method {method} not allowed")
+    # if hasn't returned yet is because the method is unknown
+    raise RequestMethodError(f"method {method} not allowed")
 
 
 def error(text: str, r: Optional[requests.Response] = None) -> None:
@@ -682,8 +648,6 @@ def upload_study(
     study_tree: Dict[str, Any],
     url: str,
     headers: Dict[str, str],
-    certfile: Path,
-    certpwd: str,
     chunk_size: int,
     IP_ADDR: str,
 ) -> None:
@@ -692,8 +656,6 @@ def upload_study(
         method=POST,
         url=f"{url}api/study",
         headers=headers,
-        certfile=certfile,
-        certpwd=certpwd,
         data={"name": study_name, "description": ""},
     )
     if r.status_code != 200:
@@ -712,8 +674,6 @@ def upload_study(
             method=POST,
             url=f"{url}api/study/{study_uuid}/phenotypes",
             headers=headers,
-            certfile=certfile,
-            certpwd=certpwd,
             data='{"get_schema": true}',
         )
         if r.status_code != 200:
@@ -743,8 +703,6 @@ def upload_study(
                 method=POST,
                 url=f"{url}api/study/{study_uuid}/phenotypes",
                 headers=headers,
-                certfile=certfile,
-                certpwd=certpwd,
                 data=phenotype,
             )
             if r.status_code != 200:
@@ -765,8 +723,6 @@ def upload_study(
                     method=POST,
                     url=f"{url}api/phenotype/{son_uuid}/relationships/{parent_uuid}",
                     headers=headers,
-                    certfile=certfile,
-                    certpwd=certpwd,
                     data={},
                 )
                 if r.status_code != 200:
@@ -782,8 +738,6 @@ def upload_study(
                 method=POST,
                 url=f"{url}api/study/{study_uuid}/technicals",
                 headers=headers,
-                certfile=certfile,
-                certpwd=certpwd,
                 data=technical["properties"],
             )
             if r.status_code != 200:
@@ -799,8 +753,6 @@ def upload_study(
             method=POST,
             url=f"{url}api/study/{study_uuid}/datasets",
             headers=headers,
-            certfile=certfile,
-            certpwd=certpwd,
             data={"name": dataset_name, "description": ""},
         )
 
@@ -817,8 +769,6 @@ def upload_study(
                 method=PUT,
                 url=f"{url}api/dataset/{uuid}",
                 headers=headers,
-                certfile=certfile,
-                certpwd=certpwd,
                 data={"phenotype": phen_uuid},
             )
             if r.status_code != 204:
@@ -837,8 +787,6 @@ def upload_study(
                     method=PUT,
                     url=f"{url}api/dataset/{uuid}",
                     headers=headers,
-                    certfile=certfile,
-                    certpwd=certpwd,
                     data={"technical": tech_uuid},
                 )
                 if r.status_code != 204:
@@ -867,8 +815,6 @@ def upload_study(
                 method=POST,
                 url=f"{url}api/dataset/{uuid}/files/upload",
                 headers=headers,
-                certfile=certfile,
-                certpwd=certpwd,
                 data=data,
             )
 
@@ -905,8 +851,6 @@ def upload_study(
                                 method=PUT,
                                 url=f"{url}api/dataset/{uuid}/files/upload/{filename}",
                                 headers=headers,
-                                certfile=certfile,
-                                certpwd=certpwd,
                                 data=read_data,
                             )
                         except (
@@ -954,8 +898,6 @@ def upload_study(
             method=PATCH,
             url=f"{url}api/dataset/{uuid}",
             headers=headers,
-            certfile=certfile,
-            certpwd=certpwd,
             data={"status": "UPLOAD COMPLETED"},
         )
         if r.status_code != 204:
@@ -975,15 +917,6 @@ def upload(
     url: str = typer.Option(..., prompt="Server URL", help="Server URL"),
     username: str = typer.Option(..., prompt="Your username"),
     pwd: str = typer.Option(..., prompt="Your password", hide_input=True),
-    certfile: Path = typer.Option(
-        ..., prompt="Path of your certificate", help="Path of the certificate file"
-    ),
-    certpwd: str = typer.Option(
-        ...,
-        prompt="Password of your certificate",
-        hide_input=True,
-        help="Password of the certificate",
-    ),
     totp: str = typer.Option(..., prompt="2FA TOTP"),
     chunk_size: int = typer.Option(16, "--chunk-size", help="Upload chunk size in MB"),
     version: bool = typer.Option(
@@ -1007,8 +940,6 @@ def upload(
     if not url.endswith("/"):
         url = f"{url}/"
 
-    if not certfile.exists():
-        return error(f"Certificate not found: {certfile}")
 
     if chunk_size > 16:
         return error(f"The specified chunk size is too large: {chunk_size}")
@@ -1021,8 +952,6 @@ def upload(
         r = request(
             method=POST,
             url=f"{url}auth/login",
-            certfile=certfile,
-            certpwd=certpwd,
             data={"username": username, "password": pwd, "totp_code": totp},
         )
 
@@ -1066,8 +995,6 @@ def upload(
             method=GET,
             url=f"{url}api/study",
             headers=headers,
-            certfile=certfile,
-            certpwd=certpwd,
             data={},
         )
         if r.status_code != 200:
@@ -1092,8 +1019,6 @@ def upload(
                     method=GET,
                     url=f"{url}api/study/{existing_studies[s.name]}/datasets",
                     headers=headers,
-                    certfile=certfile,
-                    certpwd=certpwd,
                     data={},
                 )
                 if r.status_code != 200:
@@ -1122,7 +1047,7 @@ def upload(
                 continue
             # upload the study
             upload_study(
-                study_tree, url, headers, certfile, certpwd, chunk_size, IP_ADDR
+                study_tree, url, headers, chunk_size, IP_ADDR
             )
     except (
         RequestMethodError,

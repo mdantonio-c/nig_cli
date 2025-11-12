@@ -20,7 +20,6 @@ setup(
         "requests>=2.6.1",
         "typer[all]==0.4.0",
         "click==8.0.1",
-        "pyOpenSSL",
     ],
     classifiers=[
         "Programming Language :: Python",
